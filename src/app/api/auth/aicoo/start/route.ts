@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { getOAuthRedirectUri, oauthStateCookie, oauthVerifierCookie, shouldUseSecureCookies } from "@/lib/auth";
+import { getOAuthRedirectUri, oauthRedirectCookie, oauthStateCookie, oauthVerifierCookie, shouldUseSecureCookies } from "@/lib/auth";
 
 function base64Url(buffer: Buffer) {
   return buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
@@ -29,6 +29,7 @@ export async function GET() {
   const cookieStore = await cookies();
   cookieStore.set(oauthStateCookie, state, { httpOnly: true, sameSite: "lax", secure: shouldUseSecureCookies(), path: "/", maxAge: 600 });
   cookieStore.set(oauthVerifierCookie, verifier, { httpOnly: true, sameSite: "lax", secure: shouldUseSecureCookies(), path: "/", maxAge: 600 });
+  cookieStore.set(oauthRedirectCookie, redirectUri, { httpOnly: true, sameSite: "lax", secure: shouldUseSecureCookies(), path: "/", maxAge: 600 });
 
   return NextResponse.redirect(authorize);
 }

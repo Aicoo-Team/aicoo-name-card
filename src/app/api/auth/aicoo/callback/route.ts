@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { getBaseUrl, getOAuthRedirectUri, oauthStateCookie, oauthVerifierCookie, sessionCookie, shouldUseSecureCookies } from "@/lib/auth";
+import { getBaseUrl, getOAuthRedirectUri, oauthRedirectCookie, oauthStateCookie, oauthVerifierCookie, sessionCookie, shouldUseSecureCookies } from "@/lib/auth";
 import { saveSession } from "@/lib/store";
 
 export async function GET(request: Request) {
@@ -10,6 +10,7 @@ export async function GET(request: Request) {
   const cookieStore = await cookies();
   const expectedState = cookieStore.get(oauthStateCookie)?.value;
   const verifier = cookieStore.get(oauthVerifierCookie)?.value;
+  const redirectUri = cookieStore.get(oauthRedirectCookie)?.value || getOAuthRedirectUri();
 
   if (!code || !state || !expectedState || state !== expectedState || !verifier) {
     return NextResponse.json({ error: "Invalid OAuth callback" }, { status: 400 });
@@ -18,7 +19,7 @@ export async function GET(request: Request) {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
-    redirect_uri: getOAuthRedirectUri(),
+    redirect_uri: redirectUri,
     client_id: process.env.AICOO_CLIENT_ID || "",
     code_verifier: verifier,
   });
@@ -64,6 +65,7 @@ export async function GET(request: Request) {
 
   cookieStore.delete(oauthStateCookie);
   cookieStore.delete(oauthVerifierCookie);
+  cookieStore.delete(oauthRedirectCookie);
   cookieStore.set(sessionCookie, id, { httpOnly: true, sameSite: "lax", secure: shouldUseSecureCookies(), path: "/", maxAge: 60 * 60 * 24 * 30 });
 
   return NextResponse.redirect(getBaseUrl());
