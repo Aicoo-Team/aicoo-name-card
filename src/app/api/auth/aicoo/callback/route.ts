@@ -3,6 +3,33 @@ import { NextResponse } from "next/server";
 import { getBaseUrl, getOAuthRedirectUri, oauthRedirectCookie, oauthStateCookie, oauthVerifierCookie, sessionCookie, shouldUseSecureCookies } from "@/lib/auth";
 import { saveSession } from "@/lib/store";
 
+function firstValue(source: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+  }
+  return "";
+}
+
+function normalizeUserInfo(data: unknown) {
+  const source = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  const nested =
+    (source.user && typeof source.user === "object" ? source.user : null) ||
+    (source.profile && typeof source.profile === "object" ? source.profile : null) ||
+    (source.data && typeof source.data === "object" ? source.data : null) ||
+    source;
+  const profile = nested as Record<string, unknown>;
+  const firstName = firstValue(profile, ["given_name", "firstName", "first_name"]);
+  const lastName = firstValue(profile, ["family_name", "lastName", "last_name"]);
+  const name = firstValue(profile, ["name", "displayName", "username"]) || [firstName, lastName].filter(Boolean).join(" ");
+  return {
+    id: firstValue(profile, ["sub", "id", "userId"]),
+    name,
+    email: firstValue(profile, ["email", "mail"]),
+    picture: firstValue(profile, ["picture", "avatar", "image", "avatarUrl"]),
+  };
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
@@ -47,15 +74,15 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Userinfo request failed" }, { status: 502 });
   }
 
-  const userinfo = await userResponse.json();
+  const userinfo = normalizeUserInfo(await userResponse.json());
   const id = crypto.randomUUID();
   await saveSession({
     id,
     user: {
-      id: String(userinfo.sub || userinfo.email || id),
-      name: String(userinfo.name || userinfo.email || "Aicoo User"),
-      email: String(userinfo.email || ""),
-      picture: userinfo.picture ? String(userinfo.picture) : undefined,
+      id: userinfo.id || userinfo.email || id,
+      name: userinfo.name || userinfo.email || "Aicoo User",
+      email: userinfo.email || "",
+      picture: userinfo.picture || undefined,
     },
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
