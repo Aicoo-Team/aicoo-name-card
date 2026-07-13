@@ -1,5 +1,4 @@
 import crypto from "crypto";
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getOAuthRedirectUri, oauthRedirectCookie, oauthStateCookie, oauthVerifierCookie, shouldUseSecureCookies } from "@/lib/auth";
 
@@ -26,10 +25,11 @@ export async function GET() {
   authorize.searchParams.set("code_challenge", challenge);
   authorize.searchParams.set("code_challenge_method", "S256");
 
-  const cookieStore = await cookies();
-  cookieStore.set(oauthStateCookie, state, { httpOnly: true, sameSite: "lax", secure: shouldUseSecureCookies(), path: "/", maxAge: 600 });
-  cookieStore.set(oauthVerifierCookie, verifier, { httpOnly: true, sameSite: "lax", secure: shouldUseSecureCookies(), path: "/", maxAge: 600 });
-  cookieStore.set(oauthRedirectCookie, redirectUri, { httpOnly: true, sameSite: "lax", secure: shouldUseSecureCookies(), path: "/", maxAge: 600 });
+  const response = NextResponse.redirect(authorize);
+  const cookieOptions = { httpOnly: true, sameSite: "lax" as const, secure: shouldUseSecureCookies(), path: "/", maxAge: 600 };
+  response.cookies.set(oauthStateCookie, state, cookieOptions);
+  response.cookies.set(oauthVerifierCookie, verifier, cookieOptions);
+  response.cookies.set(oauthRedirectCookie, redirectUri, cookieOptions);
 
-  return NextResponse.redirect(authorize);
+  return response;
 }

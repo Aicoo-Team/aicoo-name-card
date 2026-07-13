@@ -30,6 +30,15 @@ function normalizeUserInfo(data: unknown) {
   };
 }
 
+async function errorFromResponse(response: Response) {
+  try {
+    const payload = await response.json();
+    return String(payload.error_description || payload.error || payload.message || `HTTP ${response.status}`);
+  } catch {
+    return `HTTP ${response.status}`;
+  }
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
@@ -62,7 +71,7 @@ export async function GET(request: Request) {
   });
 
   if (!tokenResponse.ok) {
-    return NextResponse.json({ error: "Token exchange failed" }, { status: 502 });
+    return NextResponse.json({ error: "Token exchange failed", details: await errorFromResponse(tokenResponse) }, { status: 502 });
   }
 
   const tokens = await tokenResponse.json();
@@ -71,7 +80,7 @@ export async function GET(request: Request) {
   });
 
   if (!userResponse.ok) {
-    return NextResponse.json({ error: "Userinfo request failed" }, { status: 502 });
+    return NextResponse.json({ error: "Userinfo request failed", details: await errorFromResponse(userResponse) }, { status: 502 });
   }
 
   const userinfo = normalizeUserInfo(await userResponse.json());
@@ -90,10 +99,11 @@ export async function GET(request: Request) {
     createdAt: new Date().toISOString(),
   });
 
-  cookieStore.delete(oauthStateCookie);
-  cookieStore.delete(oauthVerifierCookie);
-  cookieStore.delete(oauthRedirectCookie);
-  cookieStore.set(sessionCookie, id, { httpOnly: true, sameSite: "lax", secure: shouldUseSecureCookies(), path: "/", maxAge: 60 * 60 * 24 * 30 });
+  const response = NextResponse.redirect(getBaseUrl());
+  response.cookies.delete(oauthStateCookie);
+  response.cookies.delete(oauthVerifierCookie);
+  response.cookies.delete(oauthRedirectCookie);
+  response.cookies.set(sessionCookie, id, { httpOnly: true, sameSite: "lax", secure: shouldUseSecureCookies(), path: "/", maxAge: 60 * 60 * 24 * 30 });
 
-  return NextResponse.redirect(getBaseUrl());
+  return response;
 }
