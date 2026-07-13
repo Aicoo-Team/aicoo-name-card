@@ -14,7 +14,7 @@ export default async function PublicCardPage({ params }: Props) {
 
   return (
     <main className="min-h-screen bg-[#f6f1e8] px-4 py-6 text-[#15110f]">
-      <CardPreview card={card} publicUrl={`${getBaseUrl()}/c/${card.slug}`} />
+      <CardPreview card={card} publicUrl={`${getBaseUrl()}/c/${card.slug}`} hideQr={true} />
     </main>
   );
 }

@@ -10,9 +10,10 @@ type Props = {
   card: NameCard;
   publicUrl: string;
   exportMode?: boolean;
+  hideQr?: boolean;
 };
 
-export function CardPreview({ card, publicUrl, exportMode = false }: Props) {
+export function CardPreview({ card, publicUrl, exportMode = false, hideQr = false }: Props) {
   const [qr, setQr] = useState("");
   const agentUrl = card.agent?.agentUrl || card.agent?.url || "";
   const initials = useMemo(
@@ -25,6 +26,16 @@ export function CardPreview({ card, publicUrl, exportMode = false }: Props) {
         .toUpperCase() || "AI",
     [card.name],
   );
+
+  const bookUrl = useMemo(() => {
+    const agentUrl = card.agent?.agentUrl || card.agent?.url || "";
+    if (agentUrl) {
+      const msg = `${card.name}什么时候有空`;
+      const separator = agentUrl.includes("?") ? "&" : "?";
+      return `${agentUrl}${separator}prompt=${encodeURIComponent(msg)}&message=${encodeURIComponent(msg)}`;
+    }
+    return `mailto:${card.contacts.email}`;
+  }, [card.agent, card.name, card.contacts.email]);
 
   useEffect(() => {
     QRCode.toDataURL(publicUrl, { margin: 1, width: 180, color: { dark: "#15110f", light: "#ffffff" } }).then(setQr);
@@ -52,7 +63,7 @@ export function CardPreview({ card, publicUrl, exportMode = false }: Props) {
               initials
             )}
           </div>
-          {qr ? (
+          {qr && !hideQr ? (
             <div className="rounded-2xl border border-black/10 bg-white p-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={qr} alt="QR code" className="h-20 w-20" />
@@ -85,7 +96,7 @@ export function CardPreview({ card, publicUrl, exportMode = false }: Props) {
           <div className="mt-6 grid grid-cols-3 gap-2">
             <Action href={`/api/cards/${card.slug}/vcard`} icon={<UserPlus />} label="Save" />
             <Action href={publicUrl} icon={<Share2 />} label="Share" />
-            <Action href={card.meetingUrl || `mailto:${card.contacts.email}`} icon={<Calendar />} label="Book" />
+            <Action href={bookUrl} icon={<Calendar />} label="Book" />
           </div>
         )}
 
