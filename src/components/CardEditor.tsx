@@ -2,7 +2,7 @@
 
 import { toPng } from "html-to-image";
 import { Bot, Copy, Download, ExternalLink, LogIn, LogOut, Save } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, ChangeEvent } from "react";
 import { accentOptions } from "@/lib/defaults";
 import type { NameCard, SessionUser, SharedAgent } from "@/lib/types";
 import { CardPreview } from "@/components/CardPreview";
@@ -19,6 +19,41 @@ export function CardEditor({ initialCard, user, initialAgents, publicUrl }: Prop
   const [agents, setAgents] = useState(initialAgents);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [uploadingCover, setUploadingCover] = useState(false);
+
+  async function handleFileUpload(event: ChangeEvent<HTMLInputElement>, field: "avatarUrl" | "coverUrl") {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (field === "avatarUrl") setUploadingAvatar(true);
+    else setUploadingCover(true);
+
+    setMessage("");
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || "Upload failed");
+      }
+
+      setCard((prev) => ({ ...prev, [field]: payload.url }));
+      setMessage(`${field === "avatarUrl" ? "Avatar" : "Cover"} uploaded successfully`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      if (field === "avatarUrl") setUploadingAvatar(false);
+      else setUploadingCover(false);
+    }
+  }
 
   const agentStatus = useMemo(() => {
     if (!user) return "Login with Aicoo to load your own Shared Agents.";
@@ -99,8 +134,20 @@ export function CardEditor({ initialCard, user, initialAgents, publicUrl }: Prop
               <Field label="Slug" value={card.slug} onChange={(slug) => setCard({ ...card, slug })} />
               <Field label="Title" value={card.title} onChange={(title) => setCard({ ...card, title })} />
               <Field label="Company" value={card.company} onChange={(company) => setCard({ ...card, company })} />
-              <Field label="Avatar URL" value={card.avatarUrl} onChange={(avatarUrl) => setCard({ ...card, avatarUrl })} />
-              <Field label="Cover URL" value={card.coverUrl} onChange={(coverUrl) => setCard({ ...card, coverUrl })} />
+              <ImageUploadField
+                label="Avatar URL"
+                value={card.avatarUrl}
+                onChange={(avatarUrl) => setCard({ ...card, avatarUrl })}
+                onUpload={(e) => handleFileUpload(e, "avatarUrl")}
+                uploading={uploadingAvatar}
+              />
+              <ImageUploadField
+                label="Cover URL"
+                value={card.coverUrl}
+                onChange={(coverUrl) => setCard({ ...card, coverUrl })}
+                onUpload={(e) => handleFileUpload(e, "coverUrl")}
+                uploading={uploadingCover}
+              />
             </div>
 
             <label className="mt-4 block">
@@ -113,7 +160,6 @@ export function CardEditor({ initialCard, user, initialAgents, publicUrl }: Prop
               <Field label="Phone" value={card.contacts.phone} onChange={(phone) => setCard({ ...card, contacts: { ...card.contacts, phone } })} />
               <Field label="LinkedIn" value={card.contacts.linkedin} onChange={(linkedin) => setCard({ ...card, contacts: { ...card.contacts, linkedin } })} />
               <Field label="Website" value={card.contacts.website} onChange={(website) => setCard({ ...card, contacts: { ...card.contacts, website } })} />
-              <Field label="Meeting URL" value={card.meetingUrl} onChange={(meetingUrl) => setCard({ ...card, meetingUrl })} />
             </div>
 
             <div className="mt-5">
@@ -189,5 +235,51 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
       <span className="text-xs font-black uppercase tracking-[0.12em] text-black/48">{label}</span>
       <input className="mt-2 h-12 w-full rounded-2xl border border-black/10 px-4 text-sm font-semibold outline-none focus:border-[#15110f]" value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
+  );
+}
+
+function ImageUploadField({
+  label,
+  value,
+  onChange,
+  onUpload,
+  uploading,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onUpload: (event: ChangeEvent<HTMLInputElement>) => void;
+  uploading: boolean;
+}) {
+  const id = `upload-${label.toLowerCase().replace(/\s+/g, "-")}`;
+  return (
+    <div className="block">
+      <span className="text-xs font-black uppercase tracking-[0.12em] text-black/48">{label}</span>
+      <div className="mt-2 flex gap-2">
+        <input
+          className="h-12 flex-1 min-w-0 rounded-2xl border border-black/10 px-4 text-sm font-semibold outline-none focus:border-[#15110f]"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={`Enter ${label.toLowerCase()} or upload`}
+        />
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-[#15110f] px-4 text-sm font-black text-white hover:bg-[#ff5d4f] hover:text-white transition disabled:opacity-40"
+            disabled={uploading}
+            onClick={() => document.getElementById(id)?.click()}
+          >
+            {uploading ? "..." : "Upload"}
+          </button>
+          <input
+            id={id}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={onUpload}
+          />
+        </div>
+      </div>
+    </div>
   );
 }
