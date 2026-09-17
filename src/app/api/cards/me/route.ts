@@ -1,29 +1,32 @@
-import { NextResponse } from "next/server";
 import { createDefaultCard } from "@/lib/defaults";
-import { getCurrentSession } from "@/lib/auth";
+import { requireSession } from "@/lib/auth";
 import { getCardByOwner, saveCard } from "@/lib/store";
-import type { NameCard } from "@/lib/types";
+import { editCard, record } from "@/lib/validation";
+import { readJson, sameOrigin } from "@/lib/http";
+import { AppError, errorResponse } from "@/lib/errors";
+import { listSharedAgents } from "@/lib/aicoo";
 
 export async function PUT(request: Request) {
-  const session = await getCurrentSession();
-  if (!session) {
-    return NextResponse.json({ error: "Login with Aicoo before editing your card." }, { status: 401 });
+  try {
+    sameOrigin(request);
+    const session = await requireSession();
+    const body = record(await readJson(request));
+    const base =
+      (await getCardByOwner(session.user.id)) ||
+      createDefaultCard(session.user.id);
+    const card = editCard(base, body);
+    card.aicooUsername = session.user.username;
+    if (!body.agent) card.agent = undefined;
+    else {
+      const id = record(body.agent).id;
+      card.agent = (await listSharedAgents(session)).find(
+        (agent) => agent.id === id,
+      );
+      if (!card.agent)
+        throw new AppError("Choose one of your active shared agents.");
+    }
+    return Response.json({ card: await saveCard(card) });
+  } catch (error) {
+    return errorResponse(error);
   }
-
-  const body = (await request.json()) as Partial<NameCard>;
-  const existing = await getCardByOwner(session.user.id);
-  const base = existing || createDefaultCard(session.user.id);
-  const card: NameCard = {
-    ...base,
-    ...body,
-    id: base.id,
-    ownerId: session.user.id,
-    contacts: {
-      ...base.contacts,
-      ...body.contacts,
-    },
-  };
-
-  const saved = await saveCard(card);
-  return NextResponse.json({ card: saved });
 }

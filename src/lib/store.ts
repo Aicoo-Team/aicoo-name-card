@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
 import path from "path";
 import type { NameCard, StoredSession } from "@/lib/types";
+import { AppError } from "./errors";
 
 type Database = {
   cards: NameCard[];
@@ -11,58 +12,63 @@ type Database = {
 const dataDir = path.join(process.cwd(), ".data");
 const dataFile = path.join(dataDir, "db.json");
 let sqlClient: NeonQueryFunction<false, false> | null = null;
-let schemaReady = false;
 
 function getSql() {
   const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-  if (!url) return null;
+  if (!url) {
+    if (process.env.VERCEL || process.env.NODE_ENV === "production")
+      throw new AppError("Database is not configured.", 503);
+    return null;
+  }
   if (!sqlClient) sqlClient = neon(url);
   return sqlClient;
 }
 
-async function ensureSchema(sql: NeonQueryFunction<false, false>) {
-  if (schemaReady) return;
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS card_sessions (
-      id text PRIMARY KEY,
-      data jsonb NOT NULL,
-      created_at timestamptz NOT NULL DEFAULT now()
-    )
-  `;
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS name_cards (
-      id text PRIMARY KEY,
-      owner_id text NOT NULL UNIQUE,
-      slug text NOT NULL UNIQUE,
-      data jsonb NOT NULL,
-      updated_at timestamptz NOT NULL DEFAULT now()
-    )
-  `;
-
-  schemaReady = true;
+export async function query(sql: string, params: unknown[] = []) {
+  const client = getSql();
+  if (!client)
+    throw new AppError(
+      "Set up the development database to exchange cards.",
+      503,
+    );
+  return client.query(sql, params);
 }
 
 async function readDb(): Promise<Database> {
   try {
     const raw = await fs.readFile(dataFile, "utf8");
     return JSON.parse(raw) as Database;
-  } catch {
-    return { cards: [], sessions: [] };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return { cards: [], sessions: [] };
+    throw error;
   }
 }
 
 async function writeDb(db: Database) {
   await fs.mkdir(dataDir, { recursive: true });
-  await fs.writeFile(dataFile, JSON.stringify(db, null, 2));
+  const temporary = `${dataFile}.${crypto.randomUUID()}.tmp`;
+  await fs.writeFile(temporary, JSON.stringify(db, null, 2), { mode: 0o600 });
+  await fs.rename(temporary, dataFile);
+}
+
+let localWrite: Promise<unknown> = Promise.resolve();
+async function mutate<T>(action: (db: Database) => T | Promise<T>) {
+  const operation = localWrite.then(async () => {
+    const db = await readDb();
+    const result = await action(db);
+    await writeDb(db);
+    return result;
+  });
+  localWrite = operation.catch(() => undefined);
+  return operation;
 }
 
 export async function getCardByOwner(ownerId: string) {
   const sql = getSql();
   if (sql) {
-    await ensureSchema(sql);
-    const rows = await sql`SELECT data FROM name_cards WHERE owner_id = ${ownerId} LIMIT 1`;
+    const rows =
+      await sql`SELECT data FROM name_cards WHERE owner_id = ${ownerId} LIMIT 1`;
     return (rows[0]?.data as NameCard | undefined) || null;
   }
 
@@ -73,21 +79,27 @@ export async function getCardByOwner(ownerId: string) {
 export async function getCardBySlug(slug: string) {
   const sql = getSql();
   if (sql) {
-    await ensureSchema(sql);
-    const rows = await sql`SELECT data FROM name_cards WHERE slug = ${slug} LIMIT 1`;
-    return (rows[0]?.data as NameCard | undefined) || null;
+    const rows =
+      await sql`SELECT data FROM name_cards WHERE slug = ${slug} LIMIT 1`;
+    return publicCard((rows[0]?.data as NameCard | undefined) || null);
   }
 
   const db = await readDb();
-  return db.cards.find((card) => card.slug === slug) || null;
+  return publicCard(db.cards.find((card) => card.slug === slug) || null);
+}
+
+function publicCard(card: NameCard | null) {
+  if (card?.agent?.expiresAt && Date.parse(card.agent.expiresAt) <= Date.now())
+    return { ...card, agent: { ...card.agent, isActive: false } };
+  return card;
 }
 
 export async function saveCard(card: NameCard) {
   const sql = getSql();
   if (sql) {
-    await ensureSchema(sql);
     const nextCard = { ...card, updatedAt: new Date().toISOString() };
-    await sql`
+    try {
+      await sql`
       INSERT INTO name_cards (id, owner_id, slug, data, updated_at)
       VALUES (${nextCard.id}, ${nextCard.ownerId}, ${nextCard.slug}, ${JSON.stringify(nextCard)}::jsonb, now())
       ON CONFLICT (id) DO UPDATE SET
@@ -96,27 +108,45 @@ export async function saveCard(card: NameCard) {
         data = EXCLUDED.data,
         updated_at = now()
     `;
+    } catch (error) {
+      if ((error as { code?: string }).code === "23505")
+        throw new AppError(
+          "That card address or account already exists. Reload or choose another address.",
+          409,
+        );
+      throw error;
+    }
     return nextCard;
   }
 
-  const db = await readDb();
-  const nextCard = { ...card, updatedAt: new Date().toISOString() };
-  const existing = db.cards.findIndex((item) => item.id === card.id);
+  return mutate((db) => {
+    if (
+      db.cards.some(
+        (item) =>
+          item.id !== card.id &&
+          (item.slug === card.slug || item.ownerId === card.ownerId),
+      )
+    )
+      throw new AppError(
+        "That card address or account already exists. Reload or choose another address.",
+        409,
+      );
+    const nextCard = { ...card, updatedAt: new Date().toISOString() };
+    const existing = db.cards.findIndex((item) => item.id === card.id);
 
-  if (existing >= 0) {
-    db.cards[existing] = nextCard;
-  } else {
-    db.cards.push(nextCard);
-  }
+    if (existing >= 0) {
+      db.cards[existing] = nextCard;
+    } else {
+      db.cards.push(nextCard);
+    }
 
-  await writeDb(db);
-  return nextCard;
+    return nextCard;
+  });
 }
 
 export async function saveSession(session: StoredSession) {
   const sql = getSql();
   if (sql) {
-    await ensureSchema(sql);
     await sql`
       INSERT INTO card_sessions (id, data, created_at)
       VALUES (${session.id}, ${JSON.stringify(session)}::jsonb, now())
@@ -126,25 +156,25 @@ export async function saveSession(session: StoredSession) {
     return session;
   }
 
-  const db = await readDb();
-  const existing = db.sessions.findIndex((item) => item.id === session.id);
+  return mutate((db) => {
+    const existing = db.sessions.findIndex((item) => item.id === session.id);
 
-  if (existing >= 0) {
-    db.sessions[existing] = session;
-  } else {
-    db.sessions.push(session);
-  }
+    if (existing >= 0) {
+      db.sessions[existing] = session;
+    } else {
+      db.sessions.push(session);
+    }
 
-  await writeDb(db);
-  return session;
+    return session;
+  });
 }
 
 export async function getSession(id: string | undefined) {
   if (!id) return null;
   const sql = getSql();
   if (sql) {
-    await ensureSchema(sql);
-    const rows = await sql`SELECT data FROM card_sessions WHERE id = ${id} LIMIT 1`;
+    const rows =
+      await sql`SELECT data FROM card_sessions WHERE id = ${id} LIMIT 1`;
     return (rows[0]?.data as StoredSession | undefined) || null;
   }
 
@@ -156,12 +186,54 @@ export async function deleteSession(id: string | undefined) {
   if (!id) return;
   const sql = getSql();
   if (sql) {
-    await ensureSchema(sql);
     await sql`DELETE FROM card_sessions WHERE id = ${id}`;
     return;
   }
 
-  const db = await readDb();
-  db.sessions = db.sessions.filter((session) => session.id !== id);
-  await writeDb(db);
+  await mutate((db) => {
+    db.sessions = db.sessions.filter((session) => session.id !== id);
+  });
+}
+
+// A cross-instance lease prevents rotating a refresh token twice. Never recreate
+// a session deleted by logout while a refresh request was in flight.
+export async function claimRefresh(id: string, lease: string) {
+  const until = Date.now() + 30000;
+  if (getSql()) {
+    const rows = await query(
+      `UPDATE card_sessions SET data = data || jsonb_build_object('refreshLease',$2::text,'refreshUntil',$3::bigint)
+      WHERE id=$1 AND COALESCE((data->>'refreshUntil')::bigint,0) < $4 RETURNING id`,
+      [id, lease, until, Date.now()],
+    );
+    return rows.length > 0;
+  }
+  return mutate((db) => {
+    const s = db.sessions.find((s) => s.id === id);
+    if (!s || (s.refreshUntil || 0) >= Date.now()) return false;
+    s.refreshLease = lease;
+    s.refreshUntil = until;
+    return true;
+  });
+}
+export async function finishRefresh(
+  id: string,
+  lease: string,
+  session: StoredSession,
+) {
+  const next = { ...session, refreshLease: undefined, refreshUntil: undefined };
+  if (getSql()) {
+    const rows = await query(
+      `UPDATE card_sessions SET data=$3::jsonb WHERE id=$1 AND data->>'refreshLease'=$2 RETURNING id`,
+      [id, lease, JSON.stringify(next)],
+    );
+    return rows.length > 0;
+  }
+  return mutate((db) => {
+    const index = db.sessions.findIndex(
+      (s) => s.id === id && s.refreshLease === lease,
+    );
+    if (index < 0) return false;
+    db.sessions[index] = next;
+    return true;
+  });
 }
