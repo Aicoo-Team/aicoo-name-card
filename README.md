@@ -1,4 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Aicoo Agent Name Card
+
+Agent-linked business cards built with Next.js, React, and Neon. The canonical
+production host is `https://www.agentport.world`.
+
+## Checks
+
+Use Node.js 24 LTS (the test runner uses native TypeScript stripping).
+
+```sh
+npm ci --ignore-scripts
+npm test
+npm run typecheck
+npm run lint
+npm run build
+```
+
+The checks require no production credentials. Building currently downloads Google
+fonts, so internet access is required. GitHub Actions runs the same checks on PRs.
+
+## Contact export
+
+The public card's **Save** action downloads a vCard 3.0 file. A bound Agent is
+included as a labeled URL and in the contact note, alongside the existing website
+and biography. An explicitly inactive Agent is not exported. Export does not
+renew a link, grant access, or create a connection between users.
+
+See [export behavior and device acceptance](docs/vcard-export.md). Contact-app
+import and link-opening behavior still require testing on actual devices.
+
+## Configuration and scope
+
+Use `.env.example` as the list of configuration names and obtain development
+values securely from the maintainer. Never commit credentials. Without a database
+URL, the existing store uses local `.data/db.json`; this is not production storage.
+Keep the registered OAuth redirect on the **www root URL**, not `/callback`.
+
+This first reliability change does not fix the existing upload, slug-conflict,
+OAuth refresh/scope, or share-expiry issues, and does not add reciprocal exchange.
+See [the phased backlog](docs/roadmap.md) before treating this app as release-ready.
+
+## Next.js development
 
 ## Getting Started
 
