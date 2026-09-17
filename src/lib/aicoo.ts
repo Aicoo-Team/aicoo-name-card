@@ -1,6 +1,7 @@
 import type { SharedAgent, StoredSession } from "@/lib/types";
-
-const aicooBaseUrl = "https://www.aicoo.io";
+import { aicooRequest } from "./oauth";
+import { AppError } from "./errors";
+import { safeUrl } from "./validation";
 
 type AicooShareLink = {
   id?: string;
@@ -9,35 +10,38 @@ type AicooShareLink = {
   url?: string;
   agentUrl?: string;
   isActive?: boolean;
+  expiresAt?: string | null;
 };
 
-function getServerBearer(session: StoredSession | null) {
-  return session?.accessToken || process.env.AICOO_API_KEY || "";
-}
-
-export async function listSharedAgents(session: StoredSession | null): Promise<SharedAgent[]> {
-  const bearer = getServerBearer(session);
-  if (!bearer) return [];
-
-  const response = await fetch(`${aicooBaseUrl}/api/v1/os/share/list?status=active&limit=50`, {
-    headers: { Authorization: `Bearer ${bearer}` },
-    cache: "no-store",
-  });
+export async function listSharedAgents(
+  session: StoredSession | null,
+): Promise<SharedAgent[]> {
+  if (!session) throw new AppError("Please sign in with Aicoo.", 401);
+  const response = await aicooRequest(
+    session,
+    "/os/share/list?status=active&limit=50",
+  );
 
   if (!response.ok) {
-    throw new Error(`Aicoo share list failed: ${response.status}`);
+    throw new AppError("Unable to load agents. Please retry.", 502);
   }
 
   const payload = await response.json();
-  const links: AicooShareLink[] = Array.isArray(payload.links) ? payload.links : [];
+  if (!Array.isArray(payload.links))
+    throw new AppError("Unexpected agent response. Please retry.", 502);
+  const links: AicooShareLink[] = payload.links;
 
   return links
-    .filter((link) => link?.url || link?.agentUrl)
+    .filter(
+      (link) =>
+        link?.id && link.isActive === true && (link.url || link.agentUrl),
+    )
     .map((link) => ({
       id: String(link.id || link.token || link.url),
       label: String(link.label || "Aicoo Shared Agent"),
-      url: String(link.url || link.agentUrl),
-      agentUrl: String(link.agentUrl || link.url),
+      url: safeUrl(link.url || link.agentUrl,"Agent URL"),
+      agentUrl: safeUrl(link.agentUrl || link.url,"Agent URL"),
       isActive: Boolean(link.isActive ?? true),
+      expiresAt: link.expiresAt,
     }));
 }

@@ -13,6 +13,7 @@ export type SharedAgent = {
   url: string;
   agentUrl: string;
   isActive?: boolean;
+  expiresAt?: string | null;
 };
 
 export type NameCard = {
@@ -30,6 +31,7 @@ export type NameCard = {
   meetingUrl: string;
   agent?: SharedAgent;
   updatedAt: string;
+  aicooUsername?: string;
 };
 
 export type SessionUser = {
@@ -37,6 +39,7 @@ export type SessionUser = {
   name: string;
   email: string;
   picture?: string;
+  username?: string;
 };
 
 export type StoredSession = {
@@ -46,4 +49,7 @@ export type StoredSession = {
   refreshToken?: string;
   expiresAt?: number;
   createdAt: string;
+  scope?: string;
+  refreshLease?: string;
+  refreshUntil?: number;
 };
