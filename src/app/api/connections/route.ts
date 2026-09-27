@@ -4,12 +4,16 @@ import { AppError, errorResponse } from "@/lib/errors";
 import { readJson, sameOrigin } from "@/lib/http";
 import { record, slug, text } from "@/lib/validation";
 import { getCardByOwner, getCardBySlug } from "@/lib/store";
-export async function GET() {
+import { parseExchangeFilters, pageSize } from "@/lib/exchange-view";
+export async function GET(request: Request) {
   try {
     const session = await requireSession();
-    return Response.json({
-      connections: await listConnections(session.user.id),
-    });
+    const filters = parseExchangeFilters(new URL(request.url).searchParams);
+    const rows = await listConnections(session.user.id, filters);
+    return Response.json(
+      { connections: rows.slice(0, pageSize), hasMore: rows.length > pageSize },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch (error) {
     return errorResponse(error);
   }

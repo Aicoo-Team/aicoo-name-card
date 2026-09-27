@@ -20,6 +20,14 @@ Canonical production origin: https://www.agentport.world.
   are separate; no agent access grants or automated messages.
 - Opt-in link renewal with expiry-only PATCH. It never deliberately reactivates
   expired/revoked links, changes their access scope or removes sign-in requirements.
+- Scanned-card return through sign-in and first-card creation; recoverable OAuth
+  cancellation/configuration errors and same-origin POST logout.
+- Exchange search, 30-row pagination, incoming/sent/accepted/history filters,
+  private note drafts and participant-private archive/restore.
+- Saved-link native sharing/copy fallback, downloadable QR with retry, image
+  fallbacks and expired-agent disclosure. vCard also retains the public card URL.
+- Mobile-first editing, unsaved-change warnings, help/data-use pages and a
+  configurable private support channel. No automatic messages or permission grants.
 
 ## Development
 
@@ -37,7 +45,7 @@ npm run dev
 Tests need no production credentials: vCard tests use Node's native runner;
 Vitest covers HTTP/security/OAuth/renewals and uses PGlite for real SQL constraints
 and exchange transitions. Provider calls are mocked, not live-provider acceptance.
-Build downloads Geist fonts and therefore needs internet.
+The current build uses a local/system font stack and does not fetch web fonts.
 
 Obtain **development-only** credentials securely from the maintainer. Copy the
 variable names from .env.example, never credentials into Git or PR comments.
@@ -51,12 +59,14 @@ variable names from .env.example, never credentials into Git or PR comments.
 | BLOB_READ_WRITE_TOKEN | Public Blob store belonging to this application |
 | CRON_SECRET | Random secret for the maintenance endpoint |
 | AICOO_CONTACTS_ENABLED | false until net.contacts:manage and user identity are verified |
+| SUPPORT_EMAIL | Monitored private support and deletion-request address; required for public launch |
 
 The production OAuth redirect remains **https://www.agentport.world** (root,
 not /callback). The home route forwards code/state to the internal callback.
 For local auth, the administrator must register the exact local redirect and origin.
 
-Apply migrations/001_connections.sql, then migrations/002_review_safety.sql explicitly to a backed-up **development**
+Apply migrations/001_connections.sql, migrations/002_review_safety.sql, then
+migrations/003_private_archive.sql explicitly to a backed-up **development**
 database before integration testing. There is no request-time schema creation.
 Without a DB, local card/session storage still works in ignored .data/db.json for
 development only; exchanges, uploads and renewal settings require PostgreSQL.
@@ -94,3 +104,6 @@ One formal PR contains the complete code work. Approval is not deployment.
 Live OAuth/Blob/Neon, scheduler, contact scope/username, two-device exchange,
 and iPhone/Android vCard import remain explicit acceptance gates.
 See [vCard compatibility](docs/vcard-export.md) and [release checklist](docs/roadmap.md).
+The latest implementation scope and local evidence are in
+[launch code acceptance](docs/launch-code-acceptance.md). These changes are not
+proof of deployment, provider acceptance, or App Store / Google Play approval.

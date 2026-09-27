@@ -10,11 +10,14 @@ import {
   LogOut,
   Save,
 } from "lucide-react";
-import { useMemo, useState, ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, ChangeEvent } from "react";
+import { useRouter } from "next/navigation";
 import { accentOptions } from "@/lib/defaults";
 import type { NameCard, SessionUser, SharedAgent } from "@/lib/types";
 import { CardPreview } from "@/components/CardPreview";
 import { RenewalSettings } from "@/components/RenewalSettings";
+import { requestJson } from "@/lib/client-request";
+import { ShareCard } from "@/components/ShareCard";
 
 type Props = {
   initialCard: NameCard;
@@ -23,6 +26,7 @@ type Props = {
   publicUrl: string;
   initialAgentError?: string;
   initialSaved: boolean;
+  returnTo?: string;
 };
 
 export function CardEditor({
@@ -32,9 +36,23 @@ export function CardEditor({
   initialAgents,
   publicUrl,
   initialAgentError = "",
+  returnTo = "/",
 }: Props) {
+  const router = useRouter();
+  const lock = useRef(false);
   const [saved, setSaved] = useState(initialSaved);
   const [card, setCard] = useState(initialCard);
+  const [savedCard, setSavedCard] = useState(initialCard);
+  const dirty = JSON.stringify(card) !== JSON.stringify(savedCard);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
   const [agents, setAgents] = useState(initialAgents);
   const [agentError, setAgentError] = useState(initialAgentError);
   const [savedSlug, setSavedSlug] = useState(initialCard.slug);
@@ -42,6 +60,7 @@ export function CardEditor({
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
+  const [loadingAgents, setLoadingAgents] = useState(false);
 
   async function handleFileUpload(
     event: ChangeEvent<HTMLInputElement>,
@@ -49,6 +68,18 @@ export function CardEditor({
   ) {
     const file = event.target.files?.[0];
     if (!file) return;
+    event.target.value = "";
+    if (!user) {
+      setMessage("Sign in before uploading images.");
+      return;
+    }
+    if (
+      !["image/png", "image/jpeg", "image/webp"].includes(file.type) ||
+      file.size > 3 * 1024 * 1024
+    ) {
+      setMessage("Choose a PNG, JPEG or WebP image up to 3 MB.");
+      return;
+    }
 
     if (field === "avatarUrl") setUploadingAvatar(true);
     else setUploadingCover(true);
@@ -59,15 +90,10 @@ export function CardEditor({
     formData.append("file", file);
 
     try {
-      const response = await fetch("/api/upload", {
+      const payload = await requestJson<{ url: string }>("/api/upload", {
         method: "POST",
         body: formData,
       });
-
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error || "Upload failed");
-      }
 
       setCard((prev) => ({ ...prev, [field]: payload.url }));
       setMessage(
@@ -89,46 +115,53 @@ export function CardEditor({
   }, [agents.length, user, agentError]);
 
   async function save() {
+    if (lock.current) return;
+    lock.current = true;
     setSaving(true);
     setMessage("");
     try {
-      const response = await fetch("/api/cards/me", {
+      const payload = await requestJson<{ card: NameCard }>("/api/cards/me", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(card),
       });
-      const payload = await response.json();
-      setSaving(false);
-      if (!response.ok) {
-        setMessage(payload.error || "Save failed");
-        return;
-      }
       setCard(payload.card);
+      setSavedCard(payload.card);
       setSavedSlug(payload.card.slug);
       setSaved(true);
       setMessage("Saved");
-    } catch {
-      setMessage("Save failed. Check your connection and retry.");
+      if (returnTo !== "/") router.push(returnTo);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Save failed. Check your connection and retry.",
+      );
     } finally {
+      lock.current = false;
       setSaving(false);
     }
   }
 
   async function refreshAgents() {
+    if (loadingAgents) return;
+    setLoadingAgents(true);
     setMessage("");
     try {
-      const response = await fetch("/api/aicoo/share-links");
-      const payload = await response.json();
-      if (!response.ok) {
-        setMessage(payload.error || "Could not load Shared Agents");
-        setAgentError(payload.error || "Could not load Shared Agents");
-        return;
-      }
+      const payload = await requestJson<{ agents: SharedAgent[] }>(
+        "/api/aicoo/share-links",
+      );
       setAgents(payload.agents);
       setAgentError("");
       setMessage("Shared Agents refreshed");
-    } catch {
-      setAgentError("Unable to load agents. Please retry.");
+    } catch (error) {
+      setAgentError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load agents. Please retry.",
+      );
+    } finally {
+      setLoadingAgents(false);
     }
   }
 
@@ -150,6 +183,10 @@ export function CardEditor({
   }
 
   async function exportPng() {
+    if (!saved || dirty) {
+      setMessage("Save your changes before exporting a shareable card.");
+      return;
+    }
     try {
       const node = document.getElementById("card-preview");
       if (!node) return;
@@ -172,7 +209,7 @@ export function CardEditor({
   return (
     <main className="min-h-screen bg-[#f6f1e8] text-[#15110f]">
       <div className="mx-auto grid w-full max-w-6xl gap-8 px-4 py-5 md:grid-cols-[minmax(0,1fr)_430px] md:px-8 md:py-8">
-        <section className="order-2 md:order-1">
+        <section className="order-1 min-w-0">
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.18em] text-black/50">
@@ -183,17 +220,19 @@ export function CardEditor({
               </h1>
             </div>
             {user ? (
-              <a
-                className="flex h-11 items-center gap-2 rounded-full bg-white px-4 text-sm font-black shadow-sm"
-                href="/api/auth/logout"
-              >
-                <LogOut className="h-4 w-4" />
-                Logout
-              </a>
+              <form action="/api/auth/logout" method="POST">
+                <button
+                  className="flex h-11 items-center gap-2 rounded-full bg-white px-4 text-sm font-black shadow-sm"
+                  type="submit"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Logout
+                </button>
+              </form>
             ) : (
               <a
                 className="flex h-11 items-center gap-2 rounded-full bg-[#ff5d4f] px-4 text-sm font-black text-white shadow-sm"
-                href="/api/auth/aicoo/start"
+                href={`/api/auth/aicoo/start?returnTo=${encodeURIComponent(returnTo)}`}
               >
                 <LogIn className="h-4 w-4" />
                 Login
@@ -202,6 +241,19 @@ export function CardEditor({
           </div>
 
           <div className="mt-5 rounded-3xl bg-white p-4 shadow-sm md:p-6">
+            {!initialSaved && (
+              <p className="mb-4 rounded-xl bg-stone-100 p-3">
+                {user
+                  ? "Start with your name and the contact details you want to share. Adding an agent and styling your card are optional."
+                  : "This is a sample card. Sign in with Aicoo to create your own card; nothing shown here has been published for you."}
+              </p>
+            )}
+            {returnTo !== "/" && (
+              <p className="mb-4 rounded-xl bg-stone-100 p-3">
+                Save your card to return to the person you scanned. Nothing is
+                sent until you confirm the exchange.
+              </p>
+            )}
             {user && (
               <a className="mb-4 block font-bold underline" href="/connections">
                 My exchanges & contacts →
@@ -212,146 +264,169 @@ export function CardEditor({
               intend to share. PNG, JPEG or WebP, up to 3 MB; 20 uploads per
               day.
             </p>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field
-                label="Name"
-                value={card.name}
-                onChange={(name) => setCard({ ...card, name })}
-              />
-              <Field
-                label="Slug"
-                value={card.slug}
-                onChange={(slug) => setCard({ ...card, slug })}
-              />
-              <Field
-                label="Title"
-                value={card.title}
-                onChange={(title) => setCard({ ...card, title })}
-              />
-              <Field
-                label="Company"
-                value={card.company}
-                onChange={(company) => setCard({ ...card, company })}
-              />
-              <ImageUploadField
-                label="Avatar URL"
-                value={card.avatarUrl}
-                onChange={(avatarUrl) => setCard({ ...card, avatarUrl })}
-                onUpload={(e) => handleFileUpload(e, "avatarUrl")}
-                uploading={uploadingAvatar}
-              />
-              <ImageUploadField
-                label="Cover URL"
-                value={card.coverUrl}
-                onChange={(coverUrl) => setCard({ ...card, coverUrl })}
-                onUpload={(e) => handleFileUpload(e, "coverUrl")}
-                uploading={uploadingCover}
-              />
-            </div>
-
-            <label className="mt-4 block">
-              <span className="text-xs font-black uppercase tracking-[0.12em] text-black/48">
-                Bio
-              </span>
-              <textarea
-                className="mt-2 min-h-24 w-full rounded-2xl border border-black/10 px-4 py-3 text-sm outline-none focus:border-[#15110f]"
-                value={card.bio}
-                onChange={(event) =>
-                  setCard({ ...card, bio: event.target.value })
-                }
-              />
-            </label>
-
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <Field
-                label="Email"
-                value={card.contacts.email}
-                onChange={(email) =>
-                  setCard({ ...card, contacts: { ...card.contacts, email } })
-                }
-              />
-              <Field
-                label="Phone"
-                value={card.contacts.phone}
-                onChange={(phone) =>
-                  setCard({ ...card, contacts: { ...card.contacts, phone } })
-                }
-              />
-              <Field
-                label="LinkedIn"
-                value={card.contacts.linkedin}
-                onChange={(linkedin) =>
-                  setCard({ ...card, contacts: { ...card.contacts, linkedin } })
-                }
-              />
-              <Field
-                label="Website"
-                value={card.contacts.website}
-                onChange={(website) =>
-                  setCard({ ...card, contacts: { ...card.contacts, website } })
-                }
-              />
-              <Field
-                label="Booking URL (optional)"
-                value={card.meetingUrl}
-                onChange={(meetingUrl) => setCard({ ...card, meetingUrl })}
-              />
-            </div>
-
-            <div className="mt-5">
-              <p className="text-xs font-black uppercase tracking-[0.12em] text-black/48">
-                Accent
-              </p>
-              <div className="mt-2 flex gap-2">
-                {accentOptions.map((accent) => (
-                  <button
-                    key={accent}
-                    aria-label={accent}
-                    className={`h-9 w-9 rounded-full border-2 ${card.accent === accent ? "border-black" : "border-white"}`}
-                    style={{ backgroundColor: accent }}
-                    onClick={() => setCard({ ...card, accent })}
-                  />
-                ))}
+            <fieldset disabled={saving || !user} className="min-w-0">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field
+                  label="Name"
+                  value={card.name}
+                  onChange={(name) => setCard({ ...card, name })}
+                />
+                <Field
+                  label="Slug"
+                  value={card.slug}
+                  onChange={(slug) => setCard({ ...card, slug })}
+                />
+                <Field
+                  label="Title"
+                  value={card.title}
+                  onChange={(title) => setCard({ ...card, title })}
+                />
+                <Field
+                  label="Company"
+                  value={card.company}
+                  onChange={(company) => setCard({ ...card, company })}
+                />
+                <ImageUploadField
+                  label="Avatar URL"
+                  value={card.avatarUrl}
+                  onChange={(avatarUrl) => setCard({ ...card, avatarUrl })}
+                  onUpload={(e) => handleFileUpload(e, "avatarUrl")}
+                  uploading={uploadingAvatar}
+                />
+                <ImageUploadField
+                  label="Cover URL"
+                  value={card.coverUrl}
+                  onChange={(coverUrl) => setCard({ ...card, coverUrl })}
+                  onUpload={(e) => handleFileUpload(e, "coverUrl")}
+                  uploading={uploadingCover}
+                />
               </div>
-            </div>
 
-            <div className="mt-6 rounded-2xl border border-black/10 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.12em] text-black/48">
-                    Shared Agent
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-black/56">
-                    {agentStatus}
-                  </p>
+              <label className="mt-4 block">
+                <span className="text-xs font-black uppercase tracking-[0.12em] text-black/48">
+                  Bio
+                </span>
+                <textarea
+                  className="mt-2 min-h-24 w-full rounded-2xl border border-black/10 px-4 py-3 text-sm outline-none focus:border-[#15110f]"
+                  value={card.bio}
+                  maxLength={2000}
+                  placeholder="What do you do, and what would you like to connect about?"
+                  onChange={(event) =>
+                    setCard({ ...card, bio: event.target.value })
+                  }
+                />
+              </label>
+
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <Field
+                  label="Email"
+                  value={card.contacts.email}
+                  onChange={(email) =>
+                    setCard({ ...card, contacts: { ...card.contacts, email } })
+                  }
+                />
+                <Field
+                  label="Phone"
+                  value={card.contacts.phone}
+                  onChange={(phone) =>
+                    setCard({ ...card, contacts: { ...card.contacts, phone } })
+                  }
+                />
+                <Field
+                  label="LinkedIn"
+                  value={card.contacts.linkedin}
+                  onChange={(linkedin) =>
+                    setCard({
+                      ...card,
+                      contacts: { ...card.contacts, linkedin },
+                    })
+                  }
+                />
+                <Field
+                  label="Website"
+                  value={card.contacts.website}
+                  onChange={(website) =>
+                    setCard({
+                      ...card,
+                      contacts: { ...card.contacts, website },
+                    })
+                  }
+                />
+                <Field
+                  label="Booking URL (optional)"
+                  value={card.meetingUrl}
+                  onChange={(meetingUrl) => setCard({ ...card, meetingUrl })}
+                />
+              </div>
+
+              <div className="mt-5">
+                <p className="text-xs font-black uppercase tracking-[0.12em] text-black/48">
+                  Accent
+                </p>
+                <div className="mt-2 flex gap-2">
+                  {accentOptions.map((accent) => (
+                    <button
+                      key={accent}
+                      aria-label={accent}
+                      className={`h-9 w-9 rounded-full border-2 ${card.accent === accent ? "border-black" : "border-white"}`}
+                      style={{ backgroundColor: accent }}
+                      onClick={() => setCard({ ...card, accent })}
+                    />
+                  ))}
                 </div>
-                <button
-                  className="flex h-10 items-center gap-2 rounded-full bg-[#15110f] px-4 text-sm font-black text-white disabled:opacity-40"
-                  disabled={!user}
-                  onClick={refreshAgents}
-                >
-                  <Bot className="h-4 w-4" />
-                  Load
-                </button>
               </div>
-              <select
-                className="mt-3 h-12 w-full rounded-2xl border border-black/10 bg-white px-4 text-sm font-bold outline-none"
-                value={card.agent?.id || ""}
-                onChange={(event) => {
-                  const agent = agents.find(
-                    (item) => item.id === event.target.value,
-                  );
-                  setCard({ ...card, agent });
-                }}
-              >
-                <option value="">Choose a Shared Agent</option>
-                {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+
+              <div className="mt-6 rounded-2xl border border-black/10 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.12em] text-black/48">
+                      Shared Agent
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-black/56">
+                      {agentStatus}
+                    </p>
+                  </div>
+                  <button
+                    className="flex h-10 items-center gap-2 rounded-full bg-[#15110f] px-4 text-sm font-black text-white disabled:opacity-40"
+                    disabled={!user || loadingAgents}
+                    onClick={refreshAgents}
+                  >
+                    <Bot className="h-4 w-4" />
+                    {loadingAgents ? "Loading…" : "Refresh"}
+                  </button>
+                </div>
+                <select
+                  aria-label="Shared agent"
+                  className="mt-3 h-12 w-full rounded-2xl border border-black/10 bg-white px-4 text-sm font-bold outline-none"
+                  value={card.agent?.id || ""}
+                  onChange={(event) => {
+                    const agent = agents.find(
+                      (item) => item.id === event.target.value,
+                    );
+                    setCard({ ...card, agent });
+                  }}
+                >
+                  <option value="">No agent — add one later</option>
+                  {card.agent &&
+                    !agents.some((agent) => agent.id === card.agent?.id) && (
+                      <option value={card.agent.id}>
+                        {card.agent.label} (saved link; refresh to check
+                        availability)
+                      </option>
+                    )}
+                  {agents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-2 text-xs">
+                  Visitors can talk to this agent under its existing Aicoo
+                  permissions. Exchanging a card does not grant additional
+                  access.
+                </p>
+              </div>
+            </fieldset>
 
             <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {user && (
@@ -365,7 +440,11 @@ export function CardEditor({
                 onClick={save}
               >
                 <Save className="h-4 w-4" />
-                {saving ? "Saving" : "Save"}
+                {saving
+                  ? "Saving…"
+                  : returnTo !== "/"
+                    ? "Save & return"
+                    : "Save card"}
               </button>
               <button
                 className="flex h-12 items-center justify-center gap-2 rounded-full bg-[#15110f] text-sm font-black text-white"
@@ -397,15 +476,35 @@ export function CardEditor({
             >
               {message}
             </p>
+            {user && message && (
+              <a
+                className="text-sm underline"
+                href={`/api/auth/aicoo/start?returnTo=${encodeURIComponent(returnTo)}`}
+              >
+                Having session problems? Reconnect with Aicoo
+              </a>
+            )}
+            {saved && (
+              <ShareCard
+                url={publicUrl.replace(/\/c\/[^/]+$/, `/c/${savedSlug}`)}
+                name={savedCard.name}
+                slug={savedSlug}
+              />
+            )}
+            {dirty && (
+              <p className="mt-3 text-sm">
+                Unsaved changes. Shared links show your last saved card.
+              </p>
+            )}
           </div>
         </section>
 
-        <aside className="order-1 md:order-2 md:sticky md:top-6 md:self-start">
+        <aside className="order-2 min-w-0 md:sticky md:top-6 md:self-start">
           <CardPreview
             card={card}
-            exportMode={!saved}
-            hideQr={!saved}
-            publicUrl={publicUrl.replace(/\/c\/[^/]+$/, `/c/${card.slug}`)}
+            exportMode={!saved || dirty}
+            hideQr={!saved || dirty}
+            publicUrl={publicUrl.replace(/\/c\/[^/]+$/, `/c/${savedSlug}`)}
           />
         </aside>
       </div>
@@ -430,6 +529,20 @@ function Field({
       <input
         className="mt-2 h-12 w-full rounded-2xl border border-black/10 px-4 text-sm font-semibold outline-none focus:border-[#15110f]"
         value={value}
+        required={label === "Name" || label === "Slug"}
+        maxLength={
+          label === "Name"
+            ? 120
+            : label === "Slug"
+              ? 64
+              : label === "Title" || label === "Company"
+                ? 160
+                : label === "Email"
+                  ? 254
+                  : label === "Phone"
+                    ? 64
+                    : 2048
+        }
         onChange={(event) => onChange(event.target.value)}
       />
     </label>
@@ -459,6 +572,7 @@ function ImageUploadField({
         <input
           className="h-12 flex-1 min-w-0 rounded-2xl border border-black/10 px-4 text-sm font-semibold outline-none focus:border-[#15110f]"
           value={value}
+          aria-label={label}
           onChange={(event) => onChange(event.target.value)}
           placeholder={`Enter ${label.toLowerCase()} or upload`}
         />

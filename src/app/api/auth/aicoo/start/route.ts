@@ -5,6 +5,7 @@ import { returnPath } from "@/lib/validation";
 import { NextResponse } from "next/server";
 import {
   getOAuthRedirectUri,
+  getBaseUrl,
   oauthRedirectCookie,
   oauthStateCookie,
   oauthVerifierCookie,
@@ -22,10 +23,13 @@ function base64Url(buffer: Buffer) {
 export async function GET(request: Request) {
   const clientId = process.env.AICOO_CLIENT_ID;
   if (!clientId) {
-    return NextResponse.json(
-      { error: "Missing AICOO_CLIENT_ID" },
-      { status: 500 },
+    const target = new URL("/auth-error", getBaseUrl());
+    target.searchParams.set("reason", "configuration");
+    target.searchParams.set(
+      "returnTo",
+      returnPath(new URL(request.url).searchParams.get("returnTo")),
     );
+    return NextResponse.redirect(target);
   }
 
   const state = crypto.randomBytes(24).toString("hex");

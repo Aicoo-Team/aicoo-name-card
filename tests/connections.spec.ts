@@ -19,12 +19,17 @@ import {
   listConnections,
   transition,
   saveNote,
+  archiveConnection,
 } from "../src/lib/connections";
+import { createDefaultCard } from "../src/lib/defaults";
 beforeAll(async () => {
   state.db = new PGlite();
   await state.db.exec(await readFile("migrations/001_connections.sql", "utf8"));
   await state.db.exec(
     await readFile("migrations/002_review_safety.sql", "utf8"),
+  );
+  await state.db.exec(
+    await readFile("migrations/003_private_archive.sql", "utf8"),
   );
 });
 afterAll(async () => {
@@ -37,11 +42,75 @@ beforeEach(async () => {
   for (const id of ["a", "b", "c"]) {
     await state.db.query(
       "INSERT INTO name_cards(id,owner_id,slug,data) VALUES($1,$1,$1,$2)",
-      [id, JSON.stringify({ name: id, slug: id })],
+      [id, JSON.stringify(createDefaultCard(id, { name: id, slug: id }))],
     );
   }
 });
 describe("card exchange database", () => {
+  it("archives and restores only the actor's resolved record, preserving notes", async () => {
+    const { id } = await requestConnection("a", "b", "Conference");
+    await expect(archiveConnection(id, "a", true)).rejects.toMatchObject({
+      status: 409,
+    });
+    await transition(id, "b", "accept");
+    await saveNote(id, "a", "Remember me");
+    await archiveConnection(id, "a", true);
+    expect(await listConnections("a")).toHaveLength(0);
+    expect(await listConnections("b")).toHaveLength(1);
+    const archived = await listConnections("a", {
+      q: "",
+      view: "archived",
+      page: 1,
+    });
+    expect(archived[0].note).toBe("Remember me");
+    await expect(archiveConnection(id, "c", false)).rejects.toMatchObject({
+      status: 409,
+    });
+    await archiveConnection(id, "a", false);
+    expect((await listConnections("a"))[0].note).toBe("Remember me");
+  });
+  it("filters by participant direction, status and literal name/company text", async () => {
+    await requestConnection("a", "b", "");
+    const { id } = await requestConnection("c", "a", "");
+    expect(
+      await listConnections("a", { q: "", view: "incoming", page: 1 }),
+    ).toHaveLength(1);
+    expect(
+      await listConnections("a", { q: "b", view: "outgoing", page: 1 }),
+    ).toHaveLength(1);
+    expect(
+      await listConnections("a", { q: "%", view: "all", page: 1 }),
+    ).toHaveLength(0);
+    await transition(id, "a", "accept");
+    expect(
+      await listConnections("a", { q: "C", view: "accepted", page: 1 }),
+    ).toHaveLength(1);
+    const row = (await listConnections("a"))[0];
+    expect(row.card).not.toHaveProperty("ownerId");
+    expect(row.card).not.toHaveProperty("aicooUsername");
+  });
+  it("paginates beyond the previous 200-row ceiling", async () => {
+    for (let n = 0; n < 205; n++) {
+      const other = `person-${n}`;
+      await state.db.query(
+        "INSERT INTO name_cards(id,owner_id,slug,data) VALUES($1,$1,$1,$2)",
+        [
+          other,
+          JSON.stringify(
+            createDefaultCard(other, { name: other, slug: other }),
+          ),
+        ],
+      );
+      await requestConnection("a", other, "");
+    }
+    expect(await listConnections("a")).toHaveLength(31);
+    expect(
+      await listConnections("a", { q: "", view: "all", page: 7 }),
+    ).toHaveLength(25);
+    expect(
+      await listConnections("a", { q: "person-204", view: "all", page: 1 }),
+    ).toHaveLength(1);
+  });
   it("retains terminal history and allows a fresh exchange", async () => {
     const first = await requestConnection("a", "b", "First meeting");
     await transition(first.id, "a", "cancel");

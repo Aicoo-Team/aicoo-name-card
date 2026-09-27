@@ -6,6 +6,7 @@ import { getCardByOwner } from "@/lib/store";
 import type { SharedAgent } from "@/lib/types";
 import { redirect } from "next/navigation";
 import { AppError } from "@/lib/errors";
+import { returnPath } from "@/lib/validation";
 
 type Props = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -13,6 +14,7 @@ type Props = {
 
 export default async function Home({ searchParams }: Props) {
   const query = await searchParams;
+  if (query.error) redirect("/api/auth/aicoo/callback");
   if (query.code && query.state) {
     const params = new URLSearchParams();
     params.set("code", Array.isArray(query.code) ? query.code[0] : query.code);
@@ -60,6 +62,9 @@ export default async function Home({ searchParams }: Props) {
       user={session?.user || null}
       initialAgents={agents}
       initialAgentError={agentError}
+      returnTo={returnPath(
+        typeof query.returnTo === "string" ? query.returnTo : null,
+      )}
       publicUrl={`${getBaseUrl()}/c/${card.slug}`}
     />
   );

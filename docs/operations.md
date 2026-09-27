@@ -4,11 +4,13 @@
 
 1. Back up the target database through the provider and verify the backup is
    restorable. Test on an isolated development database first.
-2. Apply migrations/001_connections.sql then migrations/002_review_safety.sql
+2. Apply migrations/001_connections.sql, migrations/002_review_safety.sql, then
+   migrations/003_private_archive.sql
    using the provider SQL console or psql. 002 replaces the all-status pair
    uniqueness constraint with a pending/accepted-only unique index, retaining
    terminal history. It also adds renewal lease identity/message/index fields.
-   Both preserve existing name_cards/card_sessions. Tests execute
+   003 adds only the participant-private archived_at column on notes. All preserve
+   existing name_cards/card_sessions. Tests execute
    the same SQL with PGlite. It does not prove production schema compatibility.
 3. Configure the variables in .env.example securely in the correct Vercel team
    (YU CHEN's projects). Preserve the www-root OAuth redirect registration.
@@ -30,6 +32,11 @@
   receives instructions. B sends, A sees incoming, B sees outgoing, C sees neither.
   A accepts; both see accepted. Test reject, sender cancel, double click,
   reciprocal requests, concurrent transitions and private notes.
+- Exchange organization: paginate beyond 200 records; search by name/company;
+  exercise all six views. Archive an accepted exchange as A; it disappears only
+  from A's active views, remains visible to B, and can be restored by A. Pending
+  requests must first be accepted, rejected or cancelled. Refresh with an unsaved
+  note; edits remain local until saved or the page is left. Test unload warnings.
 - Contacts: confirm userinfo returns a stable human username; verify
   net.contacts:manage on the actual OAuth client. Enable only in staging first.
   Test requested vs approved/already_connected, already_pending, 403, timeout and
@@ -49,7 +56,8 @@
   never return its JSON to browsers or log tokens.
 - card_connections: unique live unordered account pair, requester/recipient, shared
   event label, state and timestamps. Both participants see the relationship.
-- card_connection_notes: per-owner private notes and last confirmed sync status.
+- card_connection_notes: per-owner private notes, last confirmed sync status and
+  reversible archived_at. Archiving is not deletion or a permission revocation.
 - card_upload_quotas: database-date daily counter; attempts are reserved before
   decoding. Corrupt images and failed provider uploads consume an attempt by
   design, bounding image processing and storage retries. A dedicated retention
@@ -57,14 +65,33 @@
 - card_renewals: opt-in agent/session binding and last status. Schedule maintenance
   frequently enough to drain batches of ten before links reach expiry.
 
-The contacts page currently shows the 200 most recent exchanges. Rejected and
-cancelled relationships are retained; a user can explicitly send a new request.
+The contacts page uses 30-row pages with one lookahead row, name/company search,
+and pending/accepted/history/archived filters. Page numbers are bounded to 10,000;
+offset pagination may shift while new exchanges arrive. Rejected and cancelled
+relationships are retained; a user can explicitly send a new request.
 Profile changes appear in existing exchange lists; immutable historical card
 snapshots and account deletion/retention tooling are not part of this iteration.
 
 Removing a Blob URL does not remove the uploaded public file. Define retention
 with the owner and perform explicit, authorized cleanup of unreferenced objects.
 No production data, OAuth tokens or uploaded images were used by the automated tests.
+
+## Support and public-launch gates
+
+- Configure a monitored SUPPORT_EMAIL before building/deploying; Help and Privacy
+  are prerendered. Environment changes require a rebuild. There is deliberately
+  no fabricated fallback address or public GitHub issue link for private reports.
+- The data-use page describes implemented behavior, not an approved legal policy.
+  The operator must approve retention, backup handling and a verified-ownership
+  deletion procedure before public launch. Deletion is currently an operator-run
+  request process, not an automatic account-deletion endpoint.
+- Unexpected API failures return a sanitized incident reference. Server logs
+  record that reference without request bodies, OAuth credentials or SQL strings.
+- Client writes are never automatically retried after an ambiguous timeout.
+  Users must refresh and check whether the original write succeeded.
+- Do not start development and production builds against the same .next directory
+  concurrently. If local file watching hits EMFILE, stop dev and smoke-test the
+  completed production build with next start instead of changing global limits.
 
 ## Review revision operational notes
 

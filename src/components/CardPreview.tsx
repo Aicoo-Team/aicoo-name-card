@@ -2,19 +2,11 @@
 
 import Image from "next/image";
 import QRCode from "qrcode";
-import {
-  Bot,
-  Calendar,
-  Download,
-  Link2,
-  Mail,
-  Phone,
-  Send,
-  Share2,
-  UserPlus,
-} from "lucide-react";
+import { Bot, Calendar, Link2, Mail, Phone, UserPlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { PublicNameCard } from "@/lib/public-card";
+import { usableAgentUrl } from "@/lib/agent-link";
+import { ShareCard } from "./ShareCard";
 
 type Props = {
   card: PublicNameCard;
@@ -30,10 +22,10 @@ export function CardPreview({
   hideQr = false,
 }: Props) {
   const [qr, setQr] = useState("");
-  const agentUrl =
-    card.agent?.isActive === false
-      ? ""
-      : card.agent?.agentUrl || card.agent?.url || "";
+  const [qrError, setQrError] = useState(false);
+  const [failedAvatar, setFailedAvatar] = useState("");
+  const [failedCover, setFailedCover] = useState("");
+  const agentUrl = usableAgentUrl(card.agent);
   const initials = useMemo(
     () =>
       card.name
@@ -52,16 +44,30 @@ export function CardPreview({
       const separator = agentUrl.includes("?") ? "&" : "?";
       return `${agentUrl}${separator}prompt=${encodeURIComponent(msg)}&message=${encodeURIComponent(msg)}`;
     }
-    return `mailto:${card.contacts.email}`;
+    return card.contacts.email ? `mailto:${card.contacts.email}` : "";
   }, [agentUrl, card.meetingUrl, card.name, card.contacts.email]);
 
   useEffect(() => {
+    if (hideQr) return;
+    let active = true;
     QRCode.toDataURL(publicUrl, {
       margin: 1,
       width: 180,
       color: { dark: "#15110f", light: "#ffffff" },
-    }).then(setQr);
-  }, [publicUrl]);
+    })
+      .then((result) => {
+        if (active) {
+          setQr(result);
+          setQrError(false);
+        }
+      })
+      .catch(() => {
+        if (active) setQrError(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [publicUrl, hideQr]);
 
   return (
     <article
@@ -72,7 +78,7 @@ export function CardPreview({
         className="relative h-36 bg-[#ff5d4f]"
         style={{ backgroundColor: card.accent }}
       >
-        {card.coverUrl ? (
+        {card.coverUrl && failedCover !== card.coverUrl ? (
           <Image
             unoptimized
             src={card.coverUrl}
@@ -80,6 +86,7 @@ export function CardPreview({
             fill
             sizes="390px"
             className="object-cover"
+            onError={() => setFailedCover(card.coverUrl)}
           />
         ) : (
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_20%,rgba(255,255,255,0.36),transparent_34%),linear-gradient(135deg,rgba(255,255,255,0.2),rgba(0,0,0,0.18))]" />
@@ -89,7 +96,7 @@ export function CardPreview({
       <div className="relative px-6 pb-6">
         <div className="-mt-12 flex items-end justify-between gap-4">
           <div className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-4 border-white bg-[#f4f0e8] text-2xl font-black text-[#15110f]">
-            {card.avatarUrl ? (
+            {card.avatarUrl && failedAvatar !== card.avatarUrl ? (
               <Image
                 unoptimized
                 src={card.avatarUrl}
@@ -97,29 +104,37 @@ export function CardPreview({
                 fill
                 sizes="96px"
                 className="object-cover"
+                onError={() => setFailedAvatar(card.avatarUrl)}
               />
             ) : (
               initials
             )}
           </div>
-          {qr && !hideQr ? (
+          {qr && !hideQr && !qrError ? (
             <div className="rounded-2xl border border-black/10 bg-white p-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={qr} alt="QR code" className="h-20 w-20" />
             </div>
           ) : null}
         </div>
+        {qrError && !hideQr && (
+          <p className="mt-2 text-sm">
+            QR preview unavailable. Use the saved card link below.
+          </p>
+        )}
 
         <div className="mt-5">
-          <h1 className="text-4xl font-black leading-none text-[#15110f]">
+          <h1 className="break-words text-4xl font-black leading-tight text-[#15110f]">
             {card.name}
           </h1>
-          <p className="mt-3 text-lg font-semibold leading-6 text-black/48">
+          <p className="mt-3 break-words text-lg font-semibold leading-6 text-black/48">
             {card.title}
             {card.title && card.company ? <br /> : null}
             {card.company}
           </p>
-          <p className="mt-5 text-[15px] leading-6 text-black/64">{card.bio}</p>
+          <p className="mt-5 whitespace-pre-wrap break-words text-[15px] leading-6 text-black/64">
+            {card.bio}
+          </p>
         </div>
 
         <div className="mt-6 space-y-3">
@@ -158,45 +173,53 @@ export function CardPreview({
             Preview — save your card before sharing
           </div>
         ) : (
-          <div className="mt-6 grid grid-cols-3 gap-2">
+          <div className="mt-6 flex flex-wrap gap-2 [&>a]:flex-1">
             <Action
               href={`/api/cards/${card.slug}/vcard`}
               icon={<UserPlus />}
-              label="Save"
+              label="Save contact"
             />
-            <Action href={publicUrl} icon={<Share2 />} label="Share" />
-            <Action href={bookUrl} icon={<Calendar />} label="Book" />
+            {bookUrl && (
+              <Action
+                href={bookUrl}
+                icon={<Calendar />}
+                label={
+                  card.meetingUrl
+                    ? "Book a meeting"
+                    : agentUrl
+                      ? "Ask about a meeting"
+                      : "Email"
+                }
+              />
+            )}
           </div>
         )}
 
-        <a
-          href={agentUrl || undefined}
-          target={agentUrl ? "_blank" : undefined}
-          rel="noreferrer"
-          aria-disabled={!agentUrl}
-          className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#15110f] px-5 text-base font-black text-white transition hover:scale-[1.01]"
-        >
-          <Bot className="h-5 w-5" />
-          Talk to my agent
-        </a>
-
+        {agentUrl ? (
+          <a
+            href={agentUrl}
+            target={agentUrl ? "_blank" : undefined}
+            rel="noreferrer"
+            aria-disabled={!agentUrl}
+            className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#15110f] px-5 text-base font-black text-white transition hover:scale-[1.01]"
+          >
+            <Bot className="h-5 w-5" />
+            Talk to my agent
+          </a>
+        ) : card.agent ? (
+          <p role="status" className="mt-4 rounded-xl bg-stone-100 p-3 text-sm">
+            This agent link is unavailable or has expired. Please use the
+            contact details above to ask for a new link.
+          </p>
+        ) : null}
+        {agentUrl && (
+          <p className="mt-2 text-xs text-black/60">
+            Ask about the background shared with this agent. Confirm commitments
+            directly with the person.
+          </p>
+        )}
         {!exportMode && (
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            <a
-              className="flex h-11 items-center justify-center gap-2 rounded-full border border-black/10 text-sm font-bold"
-              href={`/api/qr?text=${encodeURIComponent(publicUrl)}&name=${card.slug}-card`}
-            >
-              <Download className="h-4 w-4" />
-              Card QR
-            </a>
-            <a
-              className="flex h-11 items-center justify-center gap-2 rounded-full border border-black/10 text-sm font-bold"
-              href={`/api/qr?text=${encodeURIComponent(agentUrl || publicUrl)}&name=${card.slug}-agent`}
-            >
-              <Send className="h-4 w-4" />
-              Agent QR
-            </a>
-          </div>
+          <ShareCard url={publicUrl} name={card.name} slug={card.slug} />
         )}
       </div>
     </article>

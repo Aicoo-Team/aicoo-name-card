@@ -1,8 +1,17 @@
 import type { NameCard } from "@/lib/types";
 
-export const accentOptions = ["#ff5d4f", "#6bbde3", "#15110f", "#8d8050", "#58c76f"];
+export const accentOptions = [
+  "#ff5d4f",
+  "#6bbde3",
+  "#15110f",
+  "#8d8050",
+  "#58c76f",
+];
 
-export function createDefaultCard(ownerId: string, input?: Partial<NameCard>): NameCard {
+export function createDefaultCard(
+  ownerId: string,
+  input?: Partial<NameCard>,
+): NameCard {
   const now = new Date().toISOString();
   const name = input?.name || "Your Name";
 
@@ -11,9 +20,9 @@ export function createDefaultCard(ownerId: string, input?: Partial<NameCard>): N
     ownerId,
     slug: input?.slug || makeSlug(name),
     name,
-    title: input?.title || "Founder",
-    company: input?.company || "Aicoo",
-    bio: input?.bio || "A short note about what you do and how your Aicoo agent can help.",
+    title: input?.title || "",
+    company: input?.company || "",
+    bio: input?.bio || "",
     avatarUrl: input?.avatarUrl || "",
     coverUrl: input?.coverUrl || "",
     accent: input?.accent || accentOptions[0],

@@ -13,7 +13,22 @@ import { saveSession } from "@/lib/store";
 import { resource } from "@/lib/oauth";
 import { oauthReturnCookie } from "@/lib/auth";
 import { returnPath } from "@/lib/validation";
-import { errorResponse } from "@/lib/errors";
+
+async function failedSignIn() {
+  const jar = await cookies();
+  const target = returnPath(jar.get(oauthReturnCookie)?.value || null);
+  const response = NextResponse.redirect(
+    new URL(`/auth-error?returnTo=${encodeURIComponent(target)}`, getBaseUrl()),
+  );
+  for (const name of [
+    oauthReturnCookie,
+    oauthStateCookie,
+    oauthVerifierCookie,
+    oauthRedirectCookie,
+  ])
+    response.cookies.delete(name);
+  return response;
+}
 
 function firstValue(source: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
@@ -75,10 +90,7 @@ export async function GET(request: Request) {
       state !== expectedState ||
       !verifier
     ) {
-      return NextResponse.json(
-        { error: "Invalid OAuth callback" },
-        { status: 400 },
-      );
+      return failedSignIn();
     }
 
     const body = new URLSearchParams({
@@ -106,10 +118,7 @@ export async function GET(request: Request) {
     );
 
     if (!tokenResponse.ok) {
-      return NextResponse.json(
-        { error: "Token exchange failed. Please sign in again." },
-        { status: 502 },
-      );
+      return failedSignIn();
     }
 
     const tokens = await tokenResponse.json();
@@ -118,10 +127,7 @@ export async function GET(request: Request) {
       !Number.isFinite(Number(tokens.expires_in)) ||
       Number(tokens.expires_in) <= 0
     )
-      return NextResponse.json(
-        { error: "Invalid authorization response." },
-        { status: 502 },
-      );
+      return failedSignIn();
     const userResponse = await fetch(
       "https://www.aicoo.io/api/auth/oauth2/userinfo",
       {
@@ -132,18 +138,11 @@ export async function GET(request: Request) {
     );
 
     if (!userResponse.ok) {
-      return NextResponse.json(
-        { error: "User profile could not be loaded." },
-        { status: 502 },
-      );
+      return failedSignIn();
     }
 
     const userinfo = normalizeUserInfo(await userResponse.json());
-    if (!userinfo.id)
-      return NextResponse.json(
-        { error: "Aicoo did not return a stable account identity." },
-        { status: 502 },
-      );
+    if (!userinfo.id) return failedSignIn();
     const id = crypto.randomUUID();
     await saveSession({
       id,
@@ -182,7 +181,7 @@ export async function GET(request: Request) {
     });
 
     return response;
-  } catch (error) {
-    return errorResponse(error);
+  } catch {
+    return failedSignIn();
   }
 }

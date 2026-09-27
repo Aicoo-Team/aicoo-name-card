@@ -1,5 +1,5 @@
 import { requireSession } from "@/lib/auth";
-import { saveNote, transition } from "@/lib/connections";
+import { saveNote, transition, archiveConnection } from "@/lib/connections";
 import { errorResponse } from "@/lib/errors";
 import { readJson, sameOrigin } from "@/lib/http";
 import { record, text } from "@/lib/validation";
@@ -14,6 +14,8 @@ export async function PATCH(
     const body = record(await readJson(request));
     if (body.action === "note")
       await saveNote(id, session.user.id, text(body.note, "Note", 2000));
+    else if (body.action === "archive" || body.action === "restore")
+      await archiveConnection(id, session.user.id, body.action === "archive");
     else
       await transition(
         id,
