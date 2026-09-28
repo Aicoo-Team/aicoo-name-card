@@ -4,10 +4,15 @@ import { NextResponse } from "next/server";
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const text = searchParams.get("text");
-  const name = searchParams.get("name") || "aicoo-qr";
+  const name = (searchParams.get("name") || "agentport-qr")
+    .replace(/[^a-zA-Z0-9_-]/g, "-")
+    .slice(0, 80);
 
-  if (!text) {
-    return NextResponse.json({ error: "Missing text" }, { status: 400 });
+  if (!text || Buffer.byteLength(text, "utf8") > 2048) {
+    return NextResponse.json(
+      { error: "A link up to 2048 UTF-8 bytes is required." },
+      { status: 400 },
+    );
   }
 
   const buffer = await QRCode.toBuffer(text, {

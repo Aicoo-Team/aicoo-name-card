@@ -44,7 +44,7 @@ function fold(line: string) {
   return parts.join("\r\n");
 }
 
-export function buildVCard(card: NameCard) {
+export function buildVCard(card: NameCard, publicUrl?: string) {
   const lines = [
     "BEGIN:VCARD",
     "VERSION:3.0",
@@ -66,8 +66,12 @@ export function buildVCard(card: NameCard) {
   const linkedin = webUrl(card.contacts.linkedin);
   const avatar = webUrl(card.avatarUrl);
   const booking = webUrl(card.meetingUrl);
+  const cardUrl = webUrl(publicUrl);
   const agentUrl =
-    card.agent?.isActive === false
+    card.agent?.isActive === false ||
+    (card.agent?.expiresAt &&
+      (!Number.isFinite(Date.parse(card.agent.expiresAt)) ||
+        Date.parse(card.agent.expiresAt) <= Date.now()))
       ? undefined
       : webUrl(card.agent?.agentUrl) || webUrl(card.agent?.url);
 
@@ -79,10 +83,13 @@ export function buildVCard(card: NameCard) {
   // NOTE is a fallback for contact apps that ignore grouped URL labels.
   if (booking)
     lines.push(`item2.URL:${booking}`, "item2.X-ABLabel:Book a meeting");
+  if (cardUrl)
+    lines.push(`item3.URL:${cardUrl}`, "item3.X-ABLabel:Agentport card");
   const note = [
     card.bio,
     agentUrl ? `Talk to my Aicoo agent: ${agentUrl}` : "",
     booking ? `Book a meeting: ${booking}` : "",
+    cardUrl ? `Updated card: ${cardUrl}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");

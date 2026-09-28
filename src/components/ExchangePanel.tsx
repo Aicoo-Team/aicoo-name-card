@@ -1,29 +1,36 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
+import { requestJson } from "@/lib/client-request";
 export function ExchangePanel({
   slug,
   signedIn,
   isOwner,
+  hasCard,
 }: {
   slug: string;
   signedIn: boolean;
   isOwner: boolean;
+  hasCard: boolean;
 }) {
   const [event, setEvent] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [sent, setSent] = useState(false);
+  const locked = useRef(false);
+  const editorUrl = `/?returnTo=${encodeURIComponent(`/c/${slug}`)}`;
   async function exchange() {
+    if (locked.current || sent) return;
+    locked.current = true;
     setBusy(true);
     setMessage("");
     try {
-      const response = await fetch("/api/connections", {
+      await requestJson("/api/connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ slug, event }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Request failed.");
+      setSent(true);
       setMessage(
         "Request sent. Your card will appear in their incoming requests; they must accept to complete the exchange.",
       );
@@ -34,6 +41,7 @@ export function ExchangePanel({
           : "Connection failed. Please retry.",
       );
     } finally {
+      locked.current = false;
       setBusy(false);
     }
   }
@@ -55,6 +63,19 @@ export function ExchangePanel({
         >
           Sign in to exchange cards
         </a>
+      ) : !hasCard ? (
+        <div>
+          <p className="mb-3 text-sm">
+            Create your card first so the other person knows who is asking.
+            After saving, you will return here to confirm the exchange.
+          </p>
+          <Link
+            className="block rounded-full bg-black p-3 text-center font-bold text-white"
+            href={editorUrl}
+          >
+            Create my card & return
+          </Link>
+        </div>
       ) : (
         <>
           <label className="block text-sm">
@@ -67,13 +88,17 @@ export function ExchangePanel({
             />
           </label>
           <button
-            disabled={busy}
+            disabled={busy || sent}
             onClick={exchange}
             className="w-full rounded-full bg-black p-3 font-bold text-white disabled:opacity-50"
           >
-            {busy ? "Sending…" : "Send my card & request exchange"}
+            {sent
+              ? "Request sent"
+              : busy
+                ? "Sending…"
+                : "Send my card & request exchange"}
           </button>
-          <Link href="/" className="mt-3 block text-sm underline">
+          <Link href={editorUrl} className="mt-3 block text-sm underline">
             Create or edit my card
           </Link>
         </>
@@ -81,6 +106,11 @@ export function ExchangePanel({
       <p role="status" className="mt-3 text-sm">
         {message}
       </p>
+      {signedIn && !isOwner && (
+        <Link href="/connections" className="mt-3 block text-sm underline">
+          Check incoming and sent requests →
+        </Link>
+      )}
     </section>
   );
 }

@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   listSharedAgents: vi.fn(),
   requestConnection: vi.fn(),
   listConnections: vi.fn(),
+  archiveConnection: vi.fn(),
+  saveNote: vi.fn(),
+  transition: vi.fn(),
   aicooRequest: vi.fn(),
   put: vi.fn(),
 }));
@@ -18,7 +21,12 @@ vi.mock("../src/lib/aicoo", () => mocks);
 vi.mock("../src/lib/connections", () => mocks);
 vi.mock("../src/lib/oauth", () => mocks);
 vi.mock("@vercel/blob", () => ({ put: mocks.put }));
-import { POST as exchange } from "../src/app/api/connections/route";
+import {
+  POST as exchange,
+  GET as list,
+} from "../src/app/api/connections/route";
+import { PATCH as updateConnection } from "../src/app/api/connections/[id]/route";
+import { GET as qr } from "../src/app/api/qr/route";
 import { PUT as save } from "../src/app/api/cards/me/route";
 import { POST as sync } from "../src/app/api/connections/[id]/sync/route";
 import { POST as upload } from "../src/app/api/upload/route";
@@ -47,6 +55,82 @@ beforeEach(() => {
   mocks.query.mockResolvedValue([{ count: 1 }]);
   vi.stubEnv("AICOO_CONTACTS_ENABLED", "true");
   vi.stubEnv("BLOB_READ_WRITE_TOKEN", "test-only-not-a-real-token");
+});
+it("lists only the authenticated owner's page with a private cache policy", async () => {
+  mocks.listConnections.mockResolvedValue(
+    Array.from({ length: 31 }, (_, id) => ({ id })),
+  );
+  const response = await list(
+    new Request(
+      "https://www.agentport.world/api/connections?page=2&view=accepted&q=Alice&ownerId=victim",
+    ),
+  );
+  expect(mocks.listConnections).toHaveBeenCalledWith("me", {
+    page: 2,
+    view: "accepted",
+    q: "Alice",
+  });
+  const payload = await response.json();
+  expect(payload.connections).toHaveLength(30);
+  expect(payload.hasMore).toBe(true);
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
+});
+it("anonymous list requests do not query private exchanges", async () => {
+  mocks.requireSession.mockRejectedValue(new AppError("Sign in", 401));
+  expect(
+    (await list(new Request("https://www.agentport.world/api/connections")))
+      .status,
+  ).toBe(401);
+  expect(mocks.listConnections).not.toHaveBeenCalled();
+});
+it.each(["archive", "restore"])(
+  "%s uses the session owner instead of posted identity",
+  async (action) => {
+    const response = await updateConnection(
+      request({ action, ownerId: "victim" }),
+      { params: Promise.resolve({ id: "exchange" }) },
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.archiveConnection).toHaveBeenCalledWith(
+      "exchange",
+      "me",
+      action === "archive",
+    );
+  },
+);
+it("cross-origin archive cannot mutate any connection", async () => {
+  const response = await updateConnection(
+    new Request("https://www.agentport.world/api/connections/x", {
+      method: "PATCH",
+      headers: { origin: "https://evil.test" },
+      body: JSON.stringify({ action: "archive" }),
+    }),
+    { params: Promise.resolve({ id: "x" }) },
+  );
+  expect(response.status).toBe(403);
+  expect(mocks.archiveConnection).not.toHaveBeenCalled();
+});
+it("bounds QR bytes and sanitizes the download filename", async () => {
+  expect(
+    (
+      await qr(
+        new Request(
+          "https://www.agentport.world/api/qr?text=" +
+            encodeURIComponent("名".repeat(1000)),
+        ),
+      )
+    ).status,
+  ).toBe(400);
+  const response = await qr(
+    new Request(
+      "https://www.agentport.world/api/qr?text=https%3A%2F%2Fwww.agentport.world%2Fc%2Falice&name=bad%22%0D%0Aname",
+    ),
+  );
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toBe("image/png");
+  expect(response.headers.get("content-disposition")).toBe(
+    'attachment; filename="bad---name.png"',
+  );
 });
 it("unauthenticated exchange writes nothing", async () => {
   mocks.requireSession.mockRejectedValue(new AppError("Sign in", 401));

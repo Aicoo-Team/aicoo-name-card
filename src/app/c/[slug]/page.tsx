@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { CardPreview } from "@/components/CardPreview";
 import { getBaseUrl, getCurrentSession } from "@/lib/auth";
 import { ExchangePanel } from "@/components/ExchangePanel";
-import { getCardBySlug } from "@/lib/store";
+import { getCardBySlug, getCardByOwner } from "@/lib/store";
 import { toPublicCard } from "@/lib/public-card";
 
 type Props = {
@@ -25,6 +25,7 @@ export default async function PublicCardPage({ params }: Props) {
       <ExchangePanel
         slug={slug}
         signedIn={!!session}
+        hasCard={!!session && !!(await getCardByOwner(session.user.id))}
         isOwner={session?.user.id === card.ownerId}
       />
     </main>

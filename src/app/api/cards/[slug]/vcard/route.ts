@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCardBySlug } from "@/lib/store";
 import { buildVCard } from "@/lib/vcard";
+import { getBaseUrl } from "@/lib/auth";
 
 type Props = {
   params: Promise<{ slug: string }>;
@@ -13,7 +14,7 @@ export async function GET(_: Request, { params }: Props) {
     return NextResponse.json({ error: "Card not found" }, { status: 404 });
   }
 
-  return new NextResponse(buildVCard(card), {
+  return new NextResponse(buildVCard(card, `${getBaseUrl()}/c/${card.slug}`), {
     headers: {
       "Content-Type": "text/vcard; charset=utf-8",
       "Content-Disposition": `attachment; filename="${card.slug}.vcf"`,

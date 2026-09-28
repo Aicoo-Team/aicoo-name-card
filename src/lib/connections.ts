@@ -1,6 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { query } from "./store";
 import { AppError } from "./errors";
+import { toPublicCard } from "./public-card";
+import type { NameCard } from "./types";
+import {
+  pageSize,
+  type ExchangeFilters,
+  type Connection,
+} from "./exchange-view";
 
 export async function requestConnection(
   from: string,
@@ -24,17 +31,61 @@ export async function requestConnection(
     );
   return rows[0];
 }
-export async function listConnections(owner: string) {
-  return query(
+export async function listConnections(
+  owner: string,
+  filters: ExchangeFilters = { q: "", view: "all", page: 1 },
+): Promise<Connection[]> {
+  const rows = await query(
     `SELECT c.id,c.status,c.event,c.created_at,c.updated_at,
     (c.recipient_id=$1) AS incoming, card.data AS card,
-    COALESCE(n.note,'') AS note,COALESCE(n.sync_status,'not_synced') AS sync_status
+    COALESCE(n.note,'') AS note,COALESCE(n.sync_status,'not_synced') AS sync_status,
+    (n.archived_at IS NOT NULL) AS archived
     FROM card_connections c
     JOIN name_cards card ON card.owner_id=CASE WHEN c.requester_id=$1 THEN c.recipient_id ELSE c.requester_id END
     LEFT JOIN card_connection_notes n ON n.connection_id=c.id AND n.owner_id=$1
-    WHERE c.requester_id=$1 OR c.recipient_id=$1 ORDER BY c.updated_at DESC LIMIT 200`,
-    [owner],
+    WHERE (c.requester_id=$1 OR c.recipient_id=$1)
+    AND (($2='archived' AND n.archived_at IS NOT NULL) OR ($2<>'archived' AND n.archived_at IS NULL))
+    AND ($2 IN ('all','archived') OR ($2='accepted' AND c.status='accepted')
+      OR ($2='incoming' AND c.status='pending' AND c.recipient_id=$1)
+      OR ($2='outgoing' AND c.status='pending' AND c.requester_id=$1)
+      OR ($2='history' AND c.status IN ('rejected','cancelled')))
+    AND ($3='' OR strpos(lower(COALESCE(card.data->>'name','') || ' ' || COALESCE(card.data->>'company','')), lower($3))>0)
+    ORDER BY c.created_at DESC,c.id DESC LIMIT $4 OFFSET $5`,
+    [
+      owner,
+      filters.view,
+      filters.q,
+      pageSize + 1,
+      (filters.page - 1) * pageSize,
+    ],
   );
+  return rows.map((row) => {
+    const card = row.card as NameCard;
+    return {
+      ...row,
+      card: toPublicCard(card),
+      canSync: !!card.aicooUsername,
+    } as Connection;
+  });
+}
+
+export async function archiveConnection(
+  id: string,
+  owner: string,
+  archived: boolean,
+) {
+  const rows = await query(
+    `INSERT INTO card_connection_notes(connection_id,owner_id,archived_at)
+    SELECT id,$2,CASE WHEN $3::boolean THEN now() ELSE NULL END FROM card_connections
+    WHERE id=$1 AND (requester_id=$2 OR recipient_id=$2) AND status<>'pending'
+    ON CONFLICT(connection_id,owner_id) DO UPDATE SET archived_at=EXCLUDED.archived_at RETURNING connection_id`,
+    [id, owner, archived],
+  );
+  if (!rows.length)
+    throw new AppError(
+      "Resolve the request before archiving, or reload if it is unavailable.",
+      409,
+    );
 }
 export async function transition(id: string, owner: string, action: string) {
   const status = (
